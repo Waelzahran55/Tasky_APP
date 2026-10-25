@@ -28,7 +28,6 @@ class _TodoScreenState extends State<TodoScreen> {
   static const String _sortModeKey = 'todo_sort_mode_v1';
   static const String _selectedDateKey = 'todo_selected_date_v1';
 
-  /// All tasks of all days. Their order also preserves custom ordering.
   final List<Task> _tasks = [];
   SortMode _sortMode = SortMode.byTime;
   DateTime _selectedDate = dateOnly(DateTime.now());
@@ -85,8 +84,7 @@ class _TodoScreenState extends State<TodoScreen> {
         _isLoading = false;
       });
 
-      // Notifications are cleared during app startup; recreate reminders
-      // from the persisted tasks.
+      
       for (final task in loadedTasks) {
         await NotificationService.instance.schedule(task);
       }
@@ -184,7 +182,6 @@ class _TodoScreenState extends State<TodoScreen> {
       );
   }
 
-  /// The order after dragging is persisted as the user's custom order.
   void _reorder(int oldIndex, int newIndex) {
     if (newIndex > oldIndex) newIndex -= 1;
     if (oldIndex == newIndex) return;

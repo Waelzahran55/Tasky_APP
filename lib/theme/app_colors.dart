@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-/// Central place for the app's colors and gradients.
 class AppColors {
   AppColors._();
 

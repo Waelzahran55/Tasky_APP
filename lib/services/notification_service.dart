@@ -41,7 +41,6 @@ class NotificationService {
         ),
       );
 
-      // Tasks are currently stored in memory only.
       await _plugin.cancelAll();
 
       _ready = true;

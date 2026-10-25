@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../utils/date_helpers.dart';
 
-/// How loudly a reminder announces itself.
 enum ReminderType {
   silent(
     'Silent',
@@ -35,7 +34,6 @@ enum ReminderType {
 class Reminder {
   const Reminder({required this.minutesBefore, required this.type});
 
-  /// Quick choices offered in the sheet (minutes before the task).
   static const presets = [0, 5, 10, 15, 30, 60, 120, 1440];
 
   final int minutesBefore;
