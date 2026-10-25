@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/sort_mode.dart';
 import '../models/task.dart';
@@ -21,20 +24,100 @@ class TodoScreen extends StatefulWidget {
 }
 
 class _TodoScreenState extends State<TodoScreen> {
-  /// All tasks of all days. Its order doubles as the user's custom order:
-  /// in custom mode the tasks of a day appear in the order they have here.
+  static const String _tasksKey = 'todo_tasks_v1';
+  static const String _sortModeKey = 'todo_sort_mode_v1';
+  static const String _selectedDateKey = 'todo_selected_date_v1';
+
+  /// All tasks of all days. Their order also preserves custom ordering.
   final List<Task> _tasks = [];
   SortMode _sortMode = SortMode.byTime;
   DateTime _selectedDate = dateOnly(DateTime.now());
+  bool _isLoading = true;
 
-  /// Tasks of the selected day, arranged by the current sort mode.
   List<Task> get _visibleTasks => sortTasks(
         _tasks.where((t) => isSameDay(t.date, _selectedDate)),
         _sortMode,
       );
 
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final rawTasks = prefs.getString(_tasksKey);
+
+      final loadedTasks = <Task>[];
+      if (rawTasks != null && rawTasks.isNotEmpty) {
+        final decoded = jsonDecode(rawTasks) as List<dynamic>;
+        for (final item in decoded) {
+          try {
+            loadedTasks.add(
+              Task.fromJson(Map<String, dynamic>.from(item as Map)),
+            );
+          } catch (e) {
+            debugPrint('Skipping invalid saved task: $e');
+          }
+        }
+      }
+
+      final savedSortMode = prefs.getString(_sortModeKey);
+      final loadedSortMode = SortMode.values.firstWhere(
+        (mode) => mode.name == savedSortMode,
+        orElse: () => SortMode.byTime,
+      );
+
+      final savedDate = prefs.getString(_selectedDateKey);
+      final loadedDate = savedDate == null
+          ? dateOnly(DateTime.now())
+          : dateOnly(DateTime.tryParse(savedDate) ?? DateTime.now());
+
+      if (!mounted) return;
+      setState(() {
+        _tasks
+          ..clear()
+          ..addAll(loadedTasks);
+        _sortMode = loadedSortMode;
+        _selectedDate = loadedDate;
+        _isLoading = false;
+      });
+
+      // Notifications are cleared during app startup; recreate reminders
+      // from the persisted tasks.
+      for (final task in loadedTasks) {
+        await NotificationService.instance.schedule(task);
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Could not load saved tasks: $e');
+      debugPrintStack(stackTrace: stackTrace);
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _saveData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _tasksKey,
+        jsonEncode(_tasks.map((task) => task.toJson()).toList()),
+      );
+      await prefs.setString(_sortModeKey, _sortMode.name);
+      await prefs.setString(
+        _selectedDateKey,
+        _selectedDate.toIso8601String(),
+      );
+    } catch (e, stackTrace) {
+      debugPrint('Could not save tasks: $e');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+  }
+
   void _selectDate(DateTime date) {
     setState(() => _selectedDate = dateOnly(date));
+    _saveData();
   }
 
   Future<void> _pickDateFromCalendar() async {
@@ -62,24 +145,28 @@ class _TodoScreenState extends State<TodoScreen> {
         final index = _tasks.indexWhere((t) => t.id == task.id);
         if (index != -1) _tasks[index] = result;
       }
-      // Jump to the day of the saved task so it never "disappears".
       _selectedDate = result.date;
     });
-    NotificationService.instance.schedule(result);
+
+    await _saveData();
+    await NotificationService.instance.schedule(result);
   }
 
-  void _toggleTask(Task task, bool? value) {
+  Future<void> _toggleTask(Task task, bool? value) async {
     setState(() => task.done = value ?? false);
-    // Done tasks lose their reminder; un-done ones get it back (if still due).
-    NotificationService.instance.schedule(task);
+    await _saveData();
+    await NotificationService.instance.schedule(task);
   }
 
-  void _deleteTask(Task task) {
+  Future<void> _deleteTask(Task task) async {
     final index = _tasks.indexWhere((t) => t.id == task.id);
     if (index == -1) return;
 
     setState(() => _tasks.removeAt(index));
-    NotificationService.instance.cancel(task.id);
+    await _saveData();
+    await NotificationService.instance.cancel(task.id);
+
+    if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -87,17 +174,17 @@ class _TodoScreenState extends State<TodoScreen> {
           content: const Text('Task deleted'),
           action: SnackBarAction(
             label: 'Undo',
-            onPressed: () {
+            onPressed: () async {
               setState(() => _tasks.insert(index, task));
-              NotificationService.instance.schedule(task);
+              await _saveData();
+              await NotificationService.instance.schedule(task);
             },
           ),
         ),
       );
   }
 
-  /// Whatever order is on screen when the user drops a task becomes the
-  /// custom order, and the sort mode switches to custom.
+  /// The order after dragging is persisted as the user's custom order.
   void _reorder(int oldIndex, int newIndex) {
     if (newIndex > oldIndex) newIndex -= 1;
     if (oldIndex == newIndex) return;
@@ -107,7 +194,6 @@ class _TodoScreenState extends State<TodoScreen> {
     reordered.insert(newIndex, moved);
 
     setState(() {
-      // Put the reordered tasks back into the slots this day's tasks occupy.
       final slots = <int>[
         for (var i = 0; i < _tasks.length; i++)
           if (isSameDay(_tasks[i].date, _selectedDate)) i,
@@ -117,6 +203,7 @@ class _TodoScreenState extends State<TodoScreen> {
       }
       _sortMode = SortMode.custom;
     });
+    _saveData();
   }
 
   @override
@@ -145,59 +232,66 @@ class _TodoScreenState extends State<TodoScreen> {
       ),
       body: SafeArea(
         bottom: false,
-        child: Column(
-          children: [
-            DayStrip(
-              selectedDate: _selectedDate,
-              tasks: _tasks,
-              onSelected: _selectDate,
-            ),
-            DayHeader(
-              date: _selectedDate,
-              tasks: tasks,
-              sortMode: _sortMode,
-              onPickDate: _pickDateFromCalendar,
-              onSortChanged: (mode) => setState(() => _sortMode = mode),
-            ),
-            Expanded(
-              child: tasks.isEmpty
-                  ? const EmptyState()
-                  : TaskList(
-                      tasks: tasks,
-                      onReorder: _reorder,
-                      onToggle: _toggleTask,
-                      onEdit: (task) => _openSheet(task: task),
-                      onDelete: _deleteTask,
-                    ),
-            ),
-          ],
-        ),
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : Column(
+                children: [
+                  DayStrip(
+                    selectedDate: _selectedDate,
+                    tasks: _tasks,
+                    onSelected: _selectDate,
+                  ),
+                  DayHeader(
+                    date: _selectedDate,
+                    tasks: tasks,
+                    sortMode: _sortMode,
+                    onPickDate: _pickDateFromCalendar,
+                    onSortChanged: (mode) {
+                      setState(() => _sortMode = mode);
+                      _saveData();
+                    },
+                  ),
+                  Expanded(
+                    child: tasks.isEmpty
+                        ? const EmptyState()
+                        : TaskList(
+                            tasks: tasks,
+                            onReorder: _reorder,
+                            onToggle: _toggleTask,
+                            onEdit: (task) => _openSheet(task: task),
+                            onDelete: _deleteTask,
+                          ),
+                  ),
+                ],
+              ),
       ),
-      floatingActionButton: Container(
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: AppColors.warmGradient,
-          boxShadow: [
-            BoxShadow(
-              color: AppColors.pink.withValues(alpha: 0.45),
-              blurRadius: 16,
-              offset: const Offset(0, 6),
+      floatingActionButton: _isLoading
+          ? null
+          : Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: AppColors.warmGradient,
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.pink.withValues(alpha: 0.45),
+                    blurRadius: 16,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: FloatingActionButton(
+                onPressed: () => _openSheet(),
+                tooltip: 'Add New Task',
+                shape: const CircleBorder(),
+                backgroundColor: Colors.transparent,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                focusElevation: 0,
+                hoverElevation: 0,
+                highlightElevation: 0,
+                child: const Icon(Icons.add_rounded, size: 30),
+              ),
             ),
-          ],
-        ),
-        child: FloatingActionButton(
-          onPressed: () => _openSheet(),
-          tooltip: 'Add New Task',
-          shape: const CircleBorder(),
-          backgroundColor: Colors.transparent,
-          foregroundColor: Colors.white,
-          elevation: 0,
-          focusElevation: 0,
-          hoverElevation: 0,
-          highlightElevation: 0,
-          child: const Icon(Icons.add_rounded, size: 30),
-        ),
-      ),
     );
   }
 }
