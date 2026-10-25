@@ -1,6 +1,3 @@
-
-import 'dart:typed_data';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -60,20 +57,20 @@ class NotificationService {
 
     try {
       if (defaultTargetPlatform == TargetPlatform.android) {
-        final android = _plugin.resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
+        final android = _plugin
+            .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin
+            >();
 
         await android?.requestNotificationsPermission();
         await android?.requestExactAlarmsPermission();
       } else if (defaultTargetPlatform == TargetPlatform.iOS) {
-        final ios = _plugin.resolvePlatformSpecificImplementation<
-            IOSFlutterLocalNotificationsPlugin>();
+        final ios = _plugin
+            .resolvePlatformSpecificImplementation<
+              IOSFlutterLocalNotificationsPlugin
+            >();
 
-        await ios?.requestPermissions(
-          alert: true,
-          badge: true,
-          sound: true,
-        );
+        await ios?.requestPermissions(alert: true, badge: true, sound: true);
       }
 
       _permissionsAsked = true;
@@ -112,10 +109,7 @@ class NotificationService {
     final when = tz.TZDateTime.from(at, tz.local);
     final details = _detailsFor(reminder.type);
 
-    final taskTime = formatTime(
-      taskTimeValue.hour,
-      taskTimeValue.minute,
-    );
+    final taskTime = formatTime(taskTimeValue.hour, taskTimeValue.minute);
 
     final body = reminder.minutesBefore == 0
         ? "It's time! ($taskTime)"
@@ -213,8 +207,16 @@ class NotificationService {
             priority: Priority.max,
             playSound: true,
             enableVibration: true,
-            vibrationPattern:
-                Int64List.fromList([0, 800, 400, 800, 400, 800, 400, 800]),
+            vibrationPattern: Int64List.fromList([
+              0,
+              800,
+              400,
+              800,
+              400,
+              800,
+              400,
+              800,
+            ]),
             category: AndroidNotificationCategory.alarm,
             audioAttributesUsage: AudioAttributesUsage.alarm,
             additionalFlags: Int32List.fromList([4]),
